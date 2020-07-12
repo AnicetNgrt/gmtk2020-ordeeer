@@ -1,13 +1,20 @@
 extends Node
 
-var punch_notes = []
-var voice_notes = []
-var current_punch_note = null
-var current_voice_note = null
-var last_punch_note_time = 0
-var last_voice_note_time = 0
+var note_count = 0
+
+var notes = []
 var yield_started = false
 var punch_started = false
+var yield_expected = false
+var punch_expected = false
+var last_punch_note_time = 0
+var last_voice_note_time = 0
+var score = 0
+var combo_voice = 0
+var combo_punch = 0
+var chaos = 0
+var last_wrong_timing_time = 0
+var yield_success = false
 
 func _on_power_update(power):
 	$GameUi.update_power(power)
@@ -25,47 +32,76 @@ func _on_power_update(power):
 			yield_started = false
 
 func _on_punch_start():
-	var note = punch_notes.pop_front()
-	if note == null:
-		return
-	if abs(note["start"] - OS.get_ticks_msec()) <= note["tolerance"]:
-		current_punch_note = note
-	else:
-		$GameUi._on_remove_last_punch_note()
+	punch_started = true
 
 func _on_punch_end():
-	if current_punch_note == null: return
-	var note = current_punch_note
-	if abs((note["start"]+note["duration"]) - OS.get_ticks_msec()) <= note["tolerance"]:
-		pass
-	else:
-		$GameUi._on_remove_last_punch_note()
-	current_punch_note = null
+	punch_started = false
 
 func _on_yield_start():
-	var note = voice_notes.pop_front()
-	if note == null:
-		print("no notes")
-		return
-	if abs(note["start"] - OS.get_ticks_msec()) <= note["tolerance"]:
-		current_voice_note = note
-		$GameUi._on_voice_start_success(1)
-		print("start success")
-	else:
-		print("start fail")
-		print(abs(note["start"] - OS.get_ticks_msec()))
-		$GameUi._on_remove_last_voice_note()
+	yield_started = true
 	
 func _on_yield_end():
-	if current_voice_note == null: return
-	var note = current_voice_note
-	if abs((note["start"]+note["duration"]) - OS.get_ticks_msec()) <= note["tolerance"]:
-		print("end success")
-	else:
-		$GameUi._on_remove_last_voice_note()
-	current_voice_note = null
+	yield_started = false
 
 func _process(delta):
+	var to_remove = []
+	var to_play_voice = []
+	var to_play_punch = []
+	var t = OS.get_ticks_msec()
+	punch_expected = false
+	yield_expected = false
+	for note in notes:
+		if note["start"]+note["duration"] < t:
+			if not note["validated"]:
+				$GameUi.note_missed()
+			to_remove.append(note)
+			$GameUi.remove_note(note["id"])
+		if note["is_punch"] == true and t >= note["start"] and t <= note["start"]+note["duration"]:
+			punch_expected = true
+			to_play_punch.push_back(note)
+		if note["is_punch"] == false and t >= note["start"] and t <= note["start"]+note["duration"]:
+			yield_expected = true
+			to_play_voice.push_back(note)
+	for note in to_remove:
+		notes.erase(note)
+	
+	if yield_expected and yield_started:
+		combo_voice += 0.1
+		score += round(combo_voice)
+		for note in to_play_voice:
+			note["validated"] = true
+		if not yield_success:
+			yield_success = true
+			$GameUi._on_voice_start_success(1)
+	if not yield_expected and yield_started:
+		combo_voice = 0
+		chaos += 1
+		if OS.get_ticks_msec() - last_wrong_timing_time > 100:
+			$GameUi.wrong_timing()
+			last_wrong_timing_time = OS.get_ticks_msec()
+	if not yield_expected:
+		yield_success = false
+	
+	if punch_expected and punch_started:
+		combo_punch += 0.1
+		score += round(combo_punch)
+		for note in to_play_punch:
+			note["validated"] = true
+	if not punch_expected and punch_started:
+		combo_punch = 0
+		chaos += 1
+		if OS.get_ticks_msec() - last_wrong_timing_time > 100:
+			$GameUi.wrong_timing()
+			last_wrong_timing_time = OS.get_ticks_msec()
+	
+	chaos += randf()/10
+	#print("chaos: "+str(chaos))
+	#print("combo_voice: "+str(round(combo_voice)))
+	#print("score: "+str(score))
+	$GameUi.update_score(score)
+	$GameUi.update_combo_voice(combo_voice)
+	$GameUi.update_combo_punch(combo_punch)
+	
 	if Input.is_action_just_pressed("punch"):
 		$GameGraphics._on_hammer_activate()
 		$GameUi._on_hammer_activate()
@@ -79,14 +115,23 @@ func _process(delta):
 			punch_started = false
 			_on_punch_end()
 		
-	if OS.get_ticks_msec() - last_punch_note_time > 16000:
+	if OS.get_ticks_msec() - last_punch_note_time > 1600:
 		last_punch_note_time = OS.get_ticks_msec()
-		var next_punch_note = {"start":OS.get_ticks_msec() + 6000,"duration":200,"tolerance":50}
-		punch_notes.push_back(next_punch_note)
-		$GameUi.spawn_punch_note(next_punch_note)
+		_spawn_note(true, 3000, 1000, 50)
 	
-	if OS.get_ticks_msec() - last_voice_note_time > 1900:
+	if OS.get_ticks_msec() - last_voice_note_time > 4100:
 		last_voice_note_time = OS.get_ticks_msec()
-		var next_voice_note = {"start":OS.get_ticks_msec() + 6000,"duration":600,"tolerance":200}
-		voice_notes.push_back(next_voice_note)
-		$GameUi.spawn_voice_note(next_voice_note)
+		_spawn_note(false, 3000, 2000, 200)
+
+func _spawn_note(is_punch, start, duration, tolerance):
+	var note = {
+		"id":note_count,
+		"is_punch":is_punch,
+		"start":OS.get_ticks_msec()+start,
+		"duration":duration,
+		"tolerance":tolerance,
+		"validated":false
+	}
+	note_count += 1
+	$GameUi.spawn_note(note)
+	notes.push_back(note)

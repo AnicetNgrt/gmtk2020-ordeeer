@@ -22,7 +22,7 @@ func _physics_process(delta):
 		if recording == null: return
 		var data = recording.get_data()
 		var s = 0
-		for i in range(44,data.size()):
+		for i in range(min(44,data.size()),data.size()):
 			s += data[i] * data[i]
 		var power = sqrt(s/(data.size()-44))
 		emit_signal("power_update", power)

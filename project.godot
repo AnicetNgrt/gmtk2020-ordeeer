@@ -64,6 +64,10 @@ punch={
  ]
 }
 
+[physics]
+
+2d/thread_model=2
+
 [rendering]
 
 threads/thread_model=2
